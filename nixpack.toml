@@ -4,5 +4,10 @@ aptPkgs = [
   "libglib2.0-0",
   "libsm6",
   "libxext6",
-  "libxrender1"
+  "libxrender1",
+  "libgl1-mesa-glx",
+  "libglu1-mesa",
+  "libglvnd0",
+  "libgl1-mesa-dri",
+  "libxcb1-dev"
 ]
