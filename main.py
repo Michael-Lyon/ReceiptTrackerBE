@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session, joinedload
 from pydantic import BaseModel
 from models import get_db, User, Receipt, LineItem, create_tables
 from auth import create_access_token, verify_token, get_password_hash, verify_password
-from ocr_processor import process_receipt
+from simple_ocr import process_receipt
 import shutil
 from pathlib import Path
 
@@ -85,6 +85,11 @@ async def upload_receipt(
     if not user:
         raise HTTPException(404, "User not found")
     
+    # Check rate limit: maximum 3 receipts per user
+    receipt_count = db.query(Receipt).filter(Receipt.user_id == user.id).count()
+    if receipt_count >= 3:
+        raise HTTPException(429, "Maximum of 3 receipts per user allowed. Please delete some receipts to upload new ones.")
+    
     # Save file
     file_path = UPLOAD_DIR / f"{user.id}_{file.filename}"
     
@@ -121,9 +126,9 @@ def get_receipt(receipt_id: int, current_user: str = Depends(verify_token), db: 
 
 @app.put("/api/receipts/{receipt_id}")
 def update_receipt(
-    receipt_id: int, 
-    data: dict, 
-    current_user: str = Depends(verify_token), 
+    receipt_id: int,
+    data: dict,
+    current_user: str = Depends(verify_token),
     db: Session = Depends(get_db)
 ):
     user = db.query(User).filter(User.email == current_user).first()
@@ -182,7 +187,7 @@ def process_receipt_ocr(receipt_id: int, current_user: str = Depends(verify_toke
     if not Path(receipt.filename).exists():
         raise HTTPException(404, "Receipt image file not found")
     
-    # Process OCR
+    # Process receipt with OCR
     try:
         ocr_data = process_receipt(receipt.filename)
         
@@ -196,11 +201,11 @@ def process_receipt_ocr(receipt_id: int, current_user: str = Depends(verify_toke
         receipt.category = ocr_data['category']
         receipt.raw_text = ocr_data['raw_text']
         
-        # Clear existing line items
+        # Clear existing line items (keep simple for now)
         for item in receipt.line_items:
             db.delete(item)
         
-        # Add new line items
+        # Add line items if any (OCR processor returns empty list for now)
         for item_data in ocr_data.get('line_items', []):
             line_item = LineItem(
                 receipt_id=receipt.id,
