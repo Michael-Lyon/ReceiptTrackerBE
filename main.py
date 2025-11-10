@@ -85,10 +85,10 @@ async def upload_receipt(
     if not user:
         raise HTTPException(404, "User not found")
     
-    # Check rate limit: maximum 3 receipts per user
+    # Check rate limit: maximum 10 receipts per user (increased for local testing)
     receipt_count = db.query(Receipt).filter(Receipt.user_id == user.id).count()
-    if receipt_count >= 3:
-        raise HTTPException(429, "Maximum of 3 receipts per user allowed. Please delete some receipts to upload new ones.")
+    if receipt_count >= 10:
+        raise HTTPException(429, "Maximum of 10 receipts per user allowed. Please delete some receipts to upload new ones.")
     
     # Save file
     file_path = UPLOAD_DIR / f"{user.id}_{file.filename}"
