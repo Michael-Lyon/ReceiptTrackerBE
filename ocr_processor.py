@@ -13,30 +13,30 @@ def preprocess_image(image_path):
     """Basic image preprocessing for OCR"""
     # Read image
     img = cv2.imread(str(image_path))
-    
+
     # Convert to grayscale
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    
+
     # Apply OTSU thresholding for better text extraction
     _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    
+
     # Optional: Apply Gaussian blur to reduce noise
     blurred = cv2.GaussianBlur(thresh, (1, 1), 0)
-    
+
     return blurred
 
 def extract_text_from_pdf(file_path):
     """Extract text from PDF receipt using pdfplumber"""
     try:
         text = ""
-        
+
         # Try pdfplumber first (better for structured PDFs)
         with pdfplumber.open(file_path) as pdf:
             for page in pdf.pages:
                 page_text = page.extract_text()
                 if page_text:
                     text += page_text + "\n"
-        
+
         # If pdfplumber didn't extract much, fallback to PyPDF2
         if len(text.strip()) < 50:
             with open(file_path, 'rb') as file:
@@ -45,7 +45,7 @@ def extract_text_from_pdf(file_path):
                     page_text = page.extract_text()
                     if page_text:
                         text += page_text + "\n"
-        
+
         return text.strip()
     except Exception as e:
         print(f"Error extracting text from PDF: {e}")
@@ -55,7 +55,7 @@ def detect_file_type(file_path):
     """Detect if file is PDF or image"""
     file_path = Path(file_path)
     extension = file_path.suffix.lower()
-    
+
     if extension == '.pdf':
         return 'pdf'
     elif extension in ['.jpg', '.jpeg', '.png', '.tiff', '.bmp']:
@@ -67,7 +67,7 @@ def extract_text(file_path):
     """Extract text from receipt file (image or PDF)"""
     try:
         file_type = detect_file_type(file_path)
-        
+
         if file_type == 'pdf':
             # Extract text from PDF
             return extract_text_from_pdf(file_path)
@@ -84,15 +84,16 @@ def extract_text(file_path):
         return ""
 
 def extract_vendor(text):
-    """Extract vendor name - improved for Nigerian receipts"""
+    """Extract vendor name - improved for Nigerian receipts and international invoices"""
     lines = [line.strip() for line in text.split('\n') if line.strip()]
     
     # Look for company names in typical positions
     vendor_patterns = [
-        r'recipient details\s+([A-Z][A-Z\s&.-]+(?:LTD|LIMITED|INC|COMPANY|CORP|PLC)?)',  # After "Recipient Details"
-        r'merchant[:\s]+([A-Z][A-Z\s&.-]+(?:LTD|LIMITED|INC|COMPANY|CORP|PLC)?)',       # After "Merchant:"
-        r'payee[:\s]+([A-Z][A-Z\s&.-]+(?:LTD|LIMITED|INC|COMPANY|CORP|PLC)?)',         # After "Payee:"
-        r'([A-Z][A-Z\s&.-]+(?:LTD|LIMITED|INC|COMPANY|CORP|PLC))',                     # Any company name pattern
+        r'recipient details\s*([A-Z][A-Z\s&.-]+(?:LTD|LIMITED|INC|COMPANY|CORP|CORPORATION|PLC)?)',  # After "Recipient Details"
+        r'merchant[:\s]+([A-Z][A-Z\s&.-]+(?:LTD|LIMITED|INC|COMPANY|CORP|CORPORATION|PLC)?)',       # After "Merchant:"
+        r'payee[:\s]+([A-Z][A-Z\s&.-]+(?:LTD|LIMITED|INC|COMPANY|CORP|CORPORATION|PLC)?)',         # After "Payee:"
+        r'([A-Z][A-Z\s&.-]+(?:LTD|LIMITED|INC|COMPANY|CORP|CORPORATION|PLC))',                     # Any company name pattern
+        r'(\w+\s+Corporation)',  # "Railway Corporation"
     ]
     
     # First try pattern matching
@@ -105,10 +106,18 @@ def extract_vendor(text):
             if len(vendor) > 3 and 'bank' not in vendor.lower():  # Must be at least 4 characters and not a bank
                 return vendor
     
+    # Check for specific known vendors
+    if 'railway corporation' in text.lower():
+        return 'Railway Corporation'
+    if 'electro galactica' in text.lower():
+        return 'Electro Galactica Company LTD'
+    if 'opay' in text.lower():
+        return 'OPay'
+    
     # Fallback: look for lines that look like company names
     for line in lines:
         # Skip obvious non-vendor lines
-        if any(skip in line.lower() for skip in ['transaction', 'receipt', 'successful', 'opay', '@', 'nov ', 'session', 'enjoy']):
+        if any(skip in line.lower() for skip in ['transaction', 'receipt', 'successful', '@', 'nov ', 'session', 'enjoy', 'invoice number', 'date of issue']):
             continue
         
         # Look for lines with mostly uppercase letters (company names)
@@ -118,7 +127,7 @@ def extract_vendor(text):
     
     # Last resort: first meaningful line
     for line in lines:
-        if len(line) > 3 and not any(skip in line.lower() for skip in ['@', 'transaction', 'receipt']):
+        if len(line) > 3 and not any(skip in line.lower() for skip in ['@', 'transaction', 'receipt', 'invoice']):
             vendor = re.sub(r'[^\w\s&.-]', '', line)
             return vendor.strip()
     
@@ -132,6 +141,8 @@ def extract_amount(text):
         r'([0-9,]+\.?\d{0,2})\s*naira',       # "7,000.00 naira"
         r'total[:\s]*₦?\s*([0-9,]+\.?\d{0,2})',  # "TOTAL: ₦7,000.00"
         r'amount[:\s]*₦?\s*([0-9,]+\.?\d{0,2})',  # "AMOUNT: ₦7,000.00"
+        r'amount\s+due[:\s]*\$?\s*([0-9,]+\.?\d{0,2})',  # "Amount due: $12.34"
+        r'amount\s+due\s+\$?([0-9,]+\.?\d{0,2})\s*USD',  # "Amount due $12.34 USD"
         r'\$\s*([0-9,]+\.?\d{0,2})',          # "$12.34" (USD for international invoices)
         r'([0-9,]+\.?\d{0,2})\s*USD',         # "12.34 USD"
         r'total[:\s]*\$?\s*([0-9,]+\.?\d{0,2})',  # "TOTAL: $12.34"
@@ -195,11 +206,14 @@ def extract_amount(text):
     return final_amounts[0][0]
 
 def extract_date(text):
-    """Extract transaction date - Updated for Nigerian formats"""
+    """Extract transaction date - Updated for Nigerian formats and international invoices"""
     # Nigerian and international date patterns
     patterns = [
         r'(Nov\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4}\s+\d{1,2}:\d{2}:\d{2})',  # "Nov 7th, 2025 17:53:25"
         r'(Nov\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4})',  # "Nov 7th, 2025"
+        r'(October\s+\d{1,2},?\s+\d{4})',  # "October 14, 2025"
+        r'(November\s+\d{1,2},?\s+\d{4})',  # "November 3, 2025"
+        r'((?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4})',  # Full month names
         r'(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})',  # 12/31/2024, 12-31-24
         r'(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{2,4})',  # 31 Dec 2024
         r'((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{2,4})',  # December 31, 2024
@@ -254,21 +268,21 @@ def extract_line_items(text):
         # Pattern with different separators
         r'^([A-Za-z][A-Za-z\s\.,&-]+?)\s+(?:Pcs?|REGULAR|x)?\s*(\d+)?\s*x?\s*([0-9,]+\.?\d{0,2})$'
     ]
-    
+
     for line in lines:
         # Skip header lines and totals
         if any(skip in line.lower() for skip in ['item name', 'subtotal', 'total', 'discount', 'settled', 'thank you', 'receipt', '====']):
             continue
-        
+
         # Skip very short lines or lines without numbers
         if len(line) < 5 or not any(c.isdigit() for c in line):
             continue
-            
+
         for pattern in patterns:
             match = re.match(pattern, line.strip(), re.IGNORECASE)
             if match:
                 groups = match.groups()
-                
+
                 if len(groups) == 4:  # Full pattern with unit type
                     name, unit_type, qty, price = groups
                     quantity = int(qty)
